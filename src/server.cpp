@@ -126,7 +126,7 @@ void Server::work() {
                     }
 
                     ev_.events = EPOLLIN | EPOLLRDHUP; // 可读 + 对端关闭
-                    if (config_.ev_mode == EpollEventMode::RT) {
+                    if (config_.ev_mode == EpollEventMode::ET) {
                         ev_.events |= EPOLLET; // 边缘触发
                     }
                     ev_.data.fd = client_fd;
