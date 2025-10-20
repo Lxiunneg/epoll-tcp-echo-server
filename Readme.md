@@ -4,7 +4,7 @@
 平台: `Ubuntu24.04`  
 编译器: Clang 18.1.3 x86_64-pc-linux-gnu  
 C++版本: `C++17`/`C++20`  
-构建工具: `CMake ` 
+构建工具: `CMake`   
 包管理: `vcpkg`  
 第三方依赖:  
 - `fmt`: C++ 字符串格式化库
