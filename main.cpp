@@ -11,7 +11,10 @@ int main() {
 
     Server::Config config{
         .port = 5050,
-        .socket_max_conn = 10240};
+        .socket_max_conn = 10240,
+        .ev_mode = Server::EpollEventMode::ET,
+        .max_epoll_events = 10,
+    };
 
     Server server(config);
     server.set_logger(server_logger)

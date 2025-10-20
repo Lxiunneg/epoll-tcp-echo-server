@@ -19,7 +19,7 @@
 namespace xiunneg {
 
 // 缓冲区大小
-constexpr uint32_t BUFFER_SIZE = 1024 * 5; // 5KB
+constexpr uint32_t BUFFER_SIZE = 1024 * 1024; // 1MB
 
 /// @brief 基于 Epoll 的高并发 TCP 服务器类
 class Server {
@@ -29,7 +29,7 @@ public:
     // epoll 触发模式枚举
     enum class EpollEventMode : uint32_t {
         LT = EPOLLIN,          // 水平触发
-        RT = EPOLLIN | EPOLLET // 边缘触发
+        ET = EPOLLIN | EPOLLET // 边缘触发
     };
 
     /// @brief 配置类
@@ -39,7 +39,7 @@ public:
         uint16_t socket_max_conn = 1024;
 
         // epoll
-        EpollEventMode ev_mode = EpollEventMode::LT;
+        EpollEventMode ev_mode = EpollEventMode::ET;
         uint32_t max_epoll_events = 10;
     };
 
