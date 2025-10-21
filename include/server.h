@@ -81,6 +81,12 @@ private:
 
     /// @brief 创建 epoll
     void create_epoll();
+
+    /// @brief 主循环任务 - 新客户端到达事件处理函数
+    void new_client_event_handler();
+
+    /// @brief 主循环任务 - 已连接客户端事件处理函数
+    void exist_client_handler(int events_index);
 };
 
 } // namespace xiunneg

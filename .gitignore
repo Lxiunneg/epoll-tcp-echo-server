@@ -1,1 +1,6 @@
+# 构建目录
 build
+# python 脚本虚拟环境
+.venv
+# 压力测试脚本输出
+output

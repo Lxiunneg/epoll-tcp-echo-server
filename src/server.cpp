@@ -92,10 +92,12 @@ void Server::work() {
     logger_->info(fmt::format("服务器成功运行在 0.0.0.0:{}", config_.port));
 
     while (running_.load()) { // 支持外部 stop()
-        int nfds = epoll_wait(epoll_fd_, events_.get(), config_.max_epoll_events, -1);
+
+        int nfds = epoll_wait(epoll_fd_, events_.get(), config_.max_epoll_events, -1); // 阻塞等待事件到来，最多 max_epoll_events 个事件
 
         if (!running_.load()) break; // 再次检查，确保快速退出
 
+        // nfds 为 -1 为超时，无限等待
         if (nfds == -1) {
             if (errno == EINTR) continue;
             logger_->error(fmt::format("epoll_wait error: {}", strerror(errno)));
@@ -105,94 +107,102 @@ void Server::work() {
         for (int i = 0; i < nfds; ++i) {
             // 1. 新连接到来
             if (events_[i].data.fd == socket_fd_) {
-                while (true) {
-                    struct sockaddr_in client_addr{};
-                    socklen_t client_len = sizeof(client_addr);
-                    int client_fd = accept(socket_fd_, (struct sockaddr *)&client_addr, &client_len);
-
-                    if (client_fd == -1) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            break; // 没有更多连接
-                        } else {
-                            logger_->error(fmt::format("accept() error: {}", strerror(errno)));
-                            break;
-                        }
-                    }
-
-                    if (make_socket_non_blocking(client_fd) == -1) {
-                        logger_->error(fmt::format("无法将客户端套接字 {} 设置为非阻塞", client_fd));
-                        close(client_fd);
-                        continue;
-                    }
-
-                    ev_.events = EPOLLIN | EPOLLRDHUP; // 可读 + 对端关闭
-                    if (config_.ev_mode == EpollEventMode::ET) {
-                        ev_.events |= EPOLLET; // 边缘触发
-                    }
-                    ev_.data.fd = client_fd;
-
-                    if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, client_fd, &ev_) == -1) {
-                        logger_->error(fmt::format("epoll 添加 client_fd={} 时发生错误: {}", client_fd, strerror(errno)));
-                        close(client_fd);
-                    } else {
-                        logger_->info(fmt::format("有来自 {}:{} 的新连接 (fd={})",
-                                                  inet_ntoa(client_addr.sin_addr),
-                                                  ntohs(client_addr.sin_port), client_fd));
-                    }
-                }
+                new_client_event_handler();
             }
             // 2. 已连接客户端有事件
             else {
-                const int client_fd = events_[i].data.fd;
-
-                // 连接关闭或错误
-                if (events_[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-                    logger_->info(fmt::format("关闭客户端 fd {} (RDHUP/HUP/ERR)", client_fd));
-                    close(client_fd);
-                    continue;
-                }
-
-                // 可读事件
-                if (events_[i].events & EPOLLIN) {
-                    char buf[BUFFER_SIZE];
-                    ssize_t n;
-                    while ((n = read(client_fd, buf, sizeof(buf))) > 0) {
-                        logger_->info(fmt::format("接收来自 fd={} 到 {} 个字节.接收到的消息为:{}", client_fd, n, buf));
-
-                        // Echo 回去
-                        ssize_t sent = 0;
-                        while (sent < n) {
-                            ssize_t result = write(client_fd, buf + sent, n - sent);
-                            if (result <= 0) {
-                                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                                    // 非阻塞写满，稍后重试（本例中直接断开）
-                                    break;
-                                } else {
-                                    logger_->error(fmt::format("回写 fd={} 错误: {}", client_fd, strerror(errno)));
-                                    close(client_fd);
-                                    goto next_event; // 跳出嵌套循环
-                                }
-                            }
-                            sent += result;
-                        }
-
-                        logger_->info(fmt::format("已回显消息到客户端[fd={}]: {}", client_fd, buf));
-                    }
-
-                    if (n == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        logger_->error(fmt::format("客户端 fd={} 错误: {}", client_fd, strerror(errno)));
-                    } else if (n == 0) {
-                        // 客户端正常关闭连接
-                        logger_->info(fmt::format("客户端 fd={} 关闭", client_fd));
-                    }
-                    // 注意：这里我们不主动 close，由 EPOLLRDHUP 触发更安全
-                }
+                exist_client_handler(i);
             }
         next_event:;
         }
     }
 
     logger_->info("服务器工作循环结束");
+}
+
+void Server::new_client_event_handler() {
+    while (true) {
+        struct sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
+        int client_fd = accept(socket_fd_, (struct sockaddr *)&client_addr, &client_len);
+
+        if (client_fd == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break; // 没有更多连接
+            } else {
+                logger_->error(fmt::format("accept() error: {}", strerror(errno)));
+                break;
+            }
+        }
+
+        if (make_socket_non_blocking(client_fd) == -1) {
+            logger_->error(fmt::format("无法将客户端套接字 {} 设置为非阻塞", client_fd));
+            close(client_fd);
+            continue;
+        }
+
+        ev_.events = EPOLLIN | EPOLLRDHUP; // 可读 + 对端关闭
+        if (config_.ev_mode == EpollEventMode::ET) {
+            ev_.events |= EPOLLET; // 边缘触发
+        }
+        ev_.data.fd = client_fd;
+
+        if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, client_fd, &ev_) == -1) {
+            logger_->error(fmt::format("epoll 添加 client_fd={} 时发生错误: {}", client_fd, strerror(errno)));
+            close(client_fd);
+        } else {
+            logger_->info(fmt::format("有来自 {}:{} 的新连接 (fd={})",
+                                      inet_ntoa(client_addr.sin_addr),
+                                      ntohs(client_addr.sin_port), client_fd));
+        }
+    }
+}
+
+void Server::exist_client_handler(int events_index) {
+    const int client_fd = events_[events_index].data.fd;
+
+    // 连接关闭或错误
+    if (events_[events_index].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+        logger_->info(fmt::format("关闭客户端 fd {} (RDHUP/HUP/ERR)", client_fd));
+        close(client_fd);
+        return;
+    }
+
+    // 可读事件
+    if (events_[events_index].events & EPOLLIN) {
+        char buf[BUFFER_SIZE];
+        ssize_t n;
+        while ((n = read(client_fd, buf, sizeof(buf))) > 0) {
+            logger_->info(fmt::format("接收来自 fd={} 到 {} 个字节.接收到的消息为:{}", client_fd, n, buf));
+
+            // Echo 回去
+            ssize_t sent = 0;
+            while (sent < n) {
+                ssize_t result = write(client_fd, buf + sent, n - sent);
+                if (result <= 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        // 非阻塞写满，稍后重试（本例中直接断开）
+                        break;
+                    } else {
+                        logger_->error(fmt::format("回写 fd={} 错误: {}", client_fd, strerror(errno)));
+                        close(client_fd);
+                        return; // 跳出调用嵌套循环
+                    }
+                }
+                sent += result;
+            }
+
+            logger_->info(fmt::format("已回显消息到客户端[fd={}]: {}", client_fd, buf));
+        }
+
+        if (n == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            logger_->error(fmt::format("客户端 fd={} 错误: {}", client_fd, strerror(errno)));
+        } else if (n == 0) {
+            // 客户端正常关闭连接
+            logger_->info(fmt::format("客户端 fd={} 关闭", client_fd));
+        }
+        // 注意：这里我们不主动 close，由 EPOLLRDHUP 触发更安全
+    }
 }
 
 void Server::run() {
