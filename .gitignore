@@ -4,3 +4,5 @@ build
 .venv
 # 压力测试脚本输出
 output
+# 日志文件
+*.log
